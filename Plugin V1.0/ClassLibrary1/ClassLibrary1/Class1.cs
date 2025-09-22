@@ -4,7 +4,10 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Drawing.Charts;
+using DocumentFormat.OpenXml.Spreadsheet;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace ClassLibrary1
 {
@@ -50,9 +53,10 @@ namespace ClassLibrary1
                     sb.Append("%<\\AcExpr ");
                     List<string> fieldParts = new List<string>();
 
-                    // 3) Call the helper
-                    var rows = CableLookup.GetRowsForSwitchboardId(xlsxPath, switchboardId);
-                    rows = rows.OrderBy(r => r.RowId).ToList();
+                    // 3) Call the GetRowsForSwitchboardId as Object CablRow
+                    var rowsObjects = CableLookup.GetRowsForSwitchboardId(xlsxPath, switchboardId);
+
+                    var rows = Tools.SortByRowId(rowsObjects, r => r.RowId);
 
                     ed.WriteMessage($"\nFound {rows.Count} row(s) where 'Connected From' = '{switchboardId}':");
                     
@@ -71,24 +75,23 @@ namespace ClassLibrary1
                         BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                         BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                        // 2) Ensure block "board" exists
+                        // 2) Ensure block "board" definition exists
                         if (!bt.Has("board"))
                         {
                             ed.WriteMessage("\nBlock 'board' not found in drawing.");
                             return;
                         }
 
-                        // 3) Create reference
-                        BlockReference br = new BlockReference(insPt, bt["board"]);
+                        // 3) Create a reference block (a Board Ref block)
+                        BlockReference BoardBlockRef = new BlockReference(insPt, bt["board"]);
 
-                        ms.AppendEntity(br);
-                        tr.AddNewlyCreatedDBObject(br, true);
+                        ms.AppendEntity(BoardBlockRef);
+                        tr.AddNewlyCreatedDBObject(BoardBlockRef, true);
 
-                        if (br.IsDynamicBlock)
+                        if (BoardBlockRef.IsDynamicBlock)
                         {
-                            //ed.WriteMessage($"\nBlock is dynamic");
-
-                            foreach (DynamicBlockReferenceProperty prop in br.DynamicBlockReferencePropertyCollection)
+                            // Set Dynamic Prop Distance1 to ...
+                            foreach (DynamicBlockReferenceProperty prop in BoardBlockRef.DynamicBlockReferencePropertyCollection)
                             {
                                 if (string.Equals(prop.PropertyName, "Distance1", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -104,15 +107,19 @@ namespace ClassLibrary1
                         const string switchBlockName = "Switches_x";
 
                         Point3d pmidl = new Point3d(insPt.X + dx, insPt.Y + dy, insPt.Z);
-                        // Insert the block at pmidl
-                        BlockReference swRefIncom = new BlockReference(pmidl, bt[switchBlockName])
+
+                        // Insert the block ref SWITCHE_s at pmidl
+                        BlockReference SwitchBlockRef = new BlockReference(pmidl, bt[switchBlockName])
                         {
                             ScaleFactors = new Scale3d(40.5)
                         };
 
-                        if (swRefIncom.IsDynamicBlock)
+                        ms.AppendEntity(SwitchBlockRef);
+                        tr.AddNewlyCreatedDBObject(SwitchBlockRef, true);
+
+                        if (SwitchBlockRef.IsDynamicBlock)    // set Visibility1
                         {
-                            foreach (DynamicBlockReferenceProperty prop in swRefIncom.DynamicBlockReferencePropertyCollection)
+                            foreach (DynamicBlockReferenceProperty prop in SwitchBlockRef.DynamicBlockReferencePropertyCollection)
                             {
                                 if (string.Equals(prop.PropertyName, "Visibility1", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -122,8 +129,7 @@ namespace ClassLibrary1
                             }
                         }
 
-                        ms.AppendEntity(swRefIncom);
-                        tr.AddNewlyCreatedDBObject(swRefIncom, true);
+                        
 
                         // Place Switches_X blocks:
                         dx = 716.8;
@@ -144,16 +150,17 @@ namespace ClassLibrary1
                             }
 
                             // Insert the block at P1
-                            BlockReference swRef = new BlockReference(p1, bt[switchBlockName])
+                            BlockReference aSwitchBlockRef = new BlockReference(p1, bt[switchBlockName])
                             {
                                 ScaleFactors = new Scale3d(40.5)   // uniform scaling on X, Y, Z
                             };
 
-                            if (swRef.IsDynamicBlock)
-                            {
-                                //ed.WriteMessage($"\nBlock is dynamic");
+                            ms.AppendEntity(aSwitchBlockRef);
+                            tr.AddNewlyCreatedDBObject(aSwitchBlockRef, true);
 
-                                foreach (DynamicBlockReferenceProperty prop in swRef.DynamicBlockReferencePropertyCollection)
+                            if (aSwitchBlockRef.IsDynamicBlock)
+                            {
+                                foreach (DynamicBlockReferenceProperty prop in aSwitchBlockRef.DynamicBlockReferencePropertyCollection)
                                 {
                                     if (string.Equals(prop.PropertyName, "Visibility1", StringComparison.OrdinalIgnoreCase))
                                     {
@@ -163,26 +170,26 @@ namespace ClassLibrary1
                                 }
                             }
 
-                            ms.AppendEntity(swRef);
-                            tr.AddNewlyCreatedDBObject(swRef, true);
+                            
 
                             // This is for Fiedl + 
                             List<string> msvdTerms = new List<string>();
 
                             // Fill attributes from row.Values (keys are your exact attribute TAGs)
-                            BlockTableRecord defBtr = (BlockTableRecord)tr.GetObject(bt[switchBlockName], OpenMode.ForRead);
+                            // We create AttrebutesDef from THE Block Definition (I said THE because it's 1 unique in dwg)
 
-                            // BEFORE your foreach loop (once per board)
+                            BlockTableRecord SwitchBlockDef = (BlockTableRecord)tr.GetObject(bt[switchBlockName], OpenMode.ForRead);
+
                             List<ObjectId> msvdFieldIds = new List<ObjectId>();
 
-                            foreach (ObjectId entId in defBtr)
+                            foreach (ObjectId entId in SwitchBlockDef)
                             {
                                 var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
                                 if (ent is AttributeDefinition attDef && !attDef.Constant)
                                 {
                                     // Create an AttributeReference based on the ATTDEF
                                     var ar = new AttributeReference();
-                                    ar.SetAttributeFromBlock(attDef, swRef.BlockTransform);
+                                    ar.SetAttributeFromBlock(attDef, aSwitchBlockRef.BlockTransform);
 
                                     // Look up value by TAG (case-insensitive because your dictionary uses OrdinalIgnoreCase)
                                     if (!row.Values.TryGetValue(attDef.Tag, out string val) || val == null)
@@ -191,7 +198,7 @@ namespace ClassLibrary1
                                     ar.TextString = val;
 
                                     // Attach attribute to the inserted block reference
-                                    swRef.AttributeCollection.AppendAttribute(ar);
+                                    aSwitchBlockRef.AttributeCollection.AppendAttribute(ar);
                                     tr.AddNewlyCreatedDBObject(ar, true);
 
 
@@ -205,21 +212,296 @@ namespace ClassLibrary1
 
                                     }
                                 }
-                            }
+                            } // foreach (ObjectId entId in SwitchBlockDef)
 
-                            ed.Command("_.ATTSYNC", "_N", "board");
-                            ed.Command("_.REGEN");
+                            // CHECK CONSUMER UNIT TAB. 
+                            // CHECK CONNECTION(COLUMN G)
+                            // IF SUB-MAIN IS CONNECTED, THEN SHOW THIS SYMBOL ON TOP, WHERE:
+                            // // Id-NO = "DB"[COLUMN B]
+                            // No of Circuits = "NO-OF-WAYS"[COLUMN Q + COLUMN U, WHERE U IS NOT EQUAL TO N / A]
+
+                            string SwitchTypeName = Tools.GetSWITCHType(xlsxPath, row.RowId);
+
+                            ed.WriteMessage($"\nType for this SWITCHE {row.RowId} row is : {Tools.GetSWITCHType(xlsxPath , row.RowId)}");
+
+                            switch (SwitchTypeName)
+                            {
+                                case "Consumer Unit":
+                                    List<string> SubMainConsumerUnitData = Tools.FindConsumerUnitData(xlsxPath, row.RowId);
+
+                                    if (SubMainConsumerUnitData.Count > 0)
+                                    {
+                                        p1 = new Point3d(p1.X, p1.Y + 7234.2, insPt.Z);
+
+                                        if (!bt.Has("Dist Board"))
+                                        {
+                                            ed.WriteMessage($"\nBlock Dist Board not found in drawing.");
+
+                                        }
+
+                                        // Insert the block Dist Boar at P1
+                                        BlockReference DistBoardBlockRef = new BlockReference(p1, bt["Dist Board"])
+                                        {
+                                            ScaleFactors = new Scale3d(1.6)   // uniform scaling on X, Y, Z
+                                        };
+
+                                        ms.AppendEntity(DistBoardBlockRef);
+                                        tr.AddNewlyCreatedDBObject(DistBoardBlockRef, true);
+
+                                        // Fill attributes from row.Values (keys are your exact attribute TAGs)
+                                        BlockTableRecord DistBoardBlockDef = (BlockTableRecord)tr.GetObject(bt["Dist Board"], OpenMode.ForRead);
+                                        DistBoardBlockDef.UpdateAnonymousBlocks();
+
+                                        // Set Visibility
+
+                                        if (DistBoardBlockRef.IsDynamicBlock)
+                                        {
+                                            foreach (DynamicBlockReferenceProperty prop in DistBoardBlockRef.DynamicBlockReferencePropertyCollection)
+                                            {
+                                                if (string.Equals(prop.PropertyName, "Visibility1", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    prop.Value = "Consumer Unit";    // .ToString();
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        // Set attributes
+                                        foreach (ObjectId entId in DistBoardBlockDef)
+                                        {
+                                            var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                                            if (ent is AttributeDefinition attDef && !attDef.Constant)
+                                            {
+                                                // Create an AttributeReference based on the ATTDEF
+                                                var ar = new AttributeReference();
+                                                ar.SetAttributeFromBlock(attDef, DistBoardBlockRef.BlockTransform);
+
+
+                                                // Set DO to "test"
+                                                if (string.Equals(attDef.Tag, "DB", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    ar.TextString = SubMainConsumerUnitData[0];
+                                                    ar.AdjustAlignment(DistBoardBlockRef.Database);
+                                                }
+
+                                                // Set DO to "test"
+                                                if (SubMainConsumerUnitData[2] != "N/A" && string.Equals(attDef.Tag, "NO-OF-WAYS", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    ar.TextString = (float.Parse(SubMainConsumerUnitData[1]) + float.Parse(SubMainConsumerUnitData[2])).ToString();
+                                                    ar.AdjustAlignment(DistBoardBlockRef.Database);
+                                                }
+
+                                                // Attach attribute to the inserted block reference
+                                                DistBoardBlockRef.AttributeCollection.AppendAttribute(ar);
+                                                tr.AddNewlyCreatedDBObject(ar, true);
+
+                                            }
+                                        }
+
+                                        DistBoardBlockRef.RecordGraphicsModified(true);
+                                        //ed.Regen();
+
+                                        //ed.Command("_.ATTSYNC", "_N", "Dist Board");
+
+                                    }
+
+                                    break;
+
+                                case "Distribution Board":
+                                    List<string> SubMainDistributionBoardData = Tools.FindDistributionBoardData(xlsxPath, row.RowId);
+
+                                    if (SubMainDistributionBoardData.Count > 0)
+                                    {
+                                        p1 = new Point3d(p1.X, p1.Y + 7234.2, insPt.Z);
+
+                                        if (!bt.Has("Dist Board"))
+                                        {
+                                            ed.WriteMessage($"\nBlock Dist Board not found in drawing.");
+
+                                        }
+
+                                        // Insert the block Dist Boar at P1
+                                        BlockReference DistBoardBlockRef = new BlockReference(p1, bt["Dist Board"])
+                                        {
+                                            ScaleFactors = new Scale3d(1.6)   // uniform scaling on X, Y, Z
+                                        };
+
+                                        ms.AppendEntity(DistBoardBlockRef);
+                                        tr.AddNewlyCreatedDBObject(DistBoardBlockRef, true);
+
+                                        // Fill attributes from row.Values (keys are your exact attribute TAGs)
+                                        BlockTableRecord DistBoardBlockDef = (BlockTableRecord)tr.GetObject(bt["Dist Board"], OpenMode.ForRead);
+                                        DistBoardBlockDef.UpdateAnonymousBlocks();
+
+                                        // Set Visibility
+
+                                        if (DistBoardBlockRef.IsDynamicBlock)
+                                        {
+                                            foreach (DynamicBlockReferenceProperty prop in DistBoardBlockRef.DynamicBlockReferencePropertyCollection)
+                                            {
+                                                if (string.Equals(prop.PropertyName, "Visibility1", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    prop.Value = "Distribution Board";    // .ToString();
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        // Set attributes
+                                        foreach (ObjectId entId in DistBoardBlockDef)
+                                        {
+                                            var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                                            if (ent is AttributeDefinition attDef && !attDef.Constant)
+                                            {
+                                                // Create an AttributeReference based on the ATTDEF
+                                                var ar = new AttributeReference();
+                                                ar.SetAttributeFromBlock(attDef, DistBoardBlockRef.BlockTransform);
+
+
+                                                // Set DO to "test"
+                                                if (string.Equals(attDef.Tag, "DB", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    ar.TextString = SubMainDistributionBoardData[0];
+                                                    ar.AdjustAlignment(DistBoardBlockRef.Database);
+                                                }
+
+                                                // Set DO to "test"
+                                                if (SubMainDistributionBoardData[1] != "N/A" && string.Equals(attDef.Tag, "NO-OF-WAYS", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    ar.TextString = SubMainDistributionBoardData[1];
+                                                    ar.AdjustAlignment(DistBoardBlockRef.Database);
+                                                }
+
+                                                // Attach attribute to the inserted block reference
+                                                DistBoardBlockRef.AttributeCollection.AppendAttribute(ar);
+                                                tr.AddNewlyCreatedDBObject(ar, true);
+
+                                            }
+                                        }
+
+                                        DistBoardBlockRef.RecordGraphicsModified(true);
+                                        //ed.Regen();
+
+                                        //ed.Command("_.ATTSYNC", "_N", "Dist Board");
+
+                                    }
+
+                                    break;
+
+                                case "FAP":
+                                    
+                                    p1 = new Point3d(p1.X, p1.Y + 7234.2, insPt.Z);
+
+                                        if (!bt.Has("FAP"))
+                                        {
+                                            ed.WriteMessage($"\nBlock FAP not found in drawing.");
+
+                                        }
+
+                                        // Insert the block Dist Boar at P1
+                                        BlockReference FAPBlockRef = new BlockReference(p1, bt["FAP"])
+                                        {
+                                            ScaleFactors = new Scale3d(1)   // uniform scaling on X, Y, Z
+                                        };
+
+                                        ms.AppendEntity(FAPBlockRef);
+                                        tr.AddNewlyCreatedDBObject(FAPBlockRef, true);
+
+                                        // Fill attributes from row.Values (keys are your exact attribute TAGs)
+                                        BlockTableRecord FAPBlockDef = (BlockTableRecord)tr.GetObject(bt["FAP"], OpenMode.ForRead);
+                                        FAPBlockDef.UpdateAnonymousBlocks();
+
+                                        FAPBlockRef.RecordGraphicsModified(true);
+
+                                    ed.Command("_.ATTSYNC", "_N", "FAP");
+
+                                    break;
+
+                                case "Load1" or "Load3":
+
+                                    p1 = new Point3d(p1.X, p1.Y + 7234.2, insPt.Z);
+
+                                    if (!bt.Has("Isolator_Disconnector"))
+                                    {
+                                        ed.WriteMessage($"\nBlock Isolator_Disconnector not found in drawing.");
+
+                                    }
+
+                                    // Insert the block Dist Boar at P1
+                                    BlockReference LoadBlockRef = new BlockReference(p1, bt["Isolator_Disconnector"])
+                                    {
+                                        ScaleFactors = new Scale3d(1)   // uniform scaling on X, Y, Z
+                                    };
+
+                                    ms.AppendEntity(LoadBlockRef);
+                                    tr.AddNewlyCreatedDBObject(LoadBlockRef, true);
+
+                                    // Fill attributes ...
+                                    BlockTableRecord LaodBlockDef = (BlockTableRecord)tr.GetObject(bt["FAP"], OpenMode.ForRead);
+                                    LaodBlockDef.UpdateAnonymousBlocks();
+
+                                    // Set Visibility
+
+                                    if (LoadBlockRef.IsDynamicBlock)
+                                    {
+                                        foreach (DynamicBlockReferenceProperty prop in LoadBlockRef.DynamicBlockReferencePropertyCollection)
+                                        {
+                                            if (string.Equals(prop.PropertyName, "Visibility1", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                if (string.Equals("Load3", SwitchTypeName, StringComparison.OrdinalIgnoreCase))
+                                                    prop.Value = "3 PHASE";
+                                                else if (string.Equals("Load1", SwitchTypeName, StringComparison.OrdinalIgnoreCase))
+                                                    prop.Value = "SINGLE PHASE";
+
+                                                break;
+                                            }
+                                        }
+
+                                    }
+
+                                    // Set attributes
+                                    foreach (ObjectId entId in LaodBlockDef)
+                                    {
+                                        var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                                        if (ent is AttributeDefinition attDef && !attDef.Constant)
+                                        {
+                                            // Create an AttributeReference based on the ATTDEF
+                                            var ar = new AttributeReference();
+                                            ar.SetAttributeFromBlock(attDef, LoadBlockRef.BlockTransform);
+
+
+                                            // Set BREAKER-SIZE to Rating-(A) from cable sheet:
+                                            if (string.Equals(attDef.Tag, "BREAKER-SIZE", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                if (row.Values.TryGetValue("Rating-(A)", out var ratingText))
+                                                    ar.TextString = ratingText;
+                                                    ar.AdjustAlignment(LoadBlockRef.Database);
+                                            }
+
+                                            // Attach attribute to the inserted block reference
+                                            LoadBlockRef.AttributeCollection.AppendAttribute(ar);
+                                            tr.AddNewlyCreatedDBObject(ar, true);
+
+                                        }
+                                    }
+
+                                    ed.Command("_.ATTSYNC", "_N", "Isolator_Disconnector", "_Y");
+
+                                    break;
+
+                            } // End swith cases for ... 
 
                             dx = dx + 1100;
                             countRow = countRow - 1;
-                        }
+                        } // for each (var row in rows)
+
 
                         sb.Append(string.Join(" + ", fieldParts));
                         sb.Append(" \\f \"%lu2%pr3\">%");
                         string NewFieldExpression = sb.ToString();
 
  
-                        foreach (ObjectId attId in br.AttributeCollection) // 'br' is your board BlockReference
+                        foreach (ObjectId attId in BoardBlockRef.AttributeCollection) // 'br' is your board BlockReference
                         {
                             var attRef = tr.GetObject(attId, OpenMode.ForWrite) as AttributeReference;
                             if (attRef != null && string.Equals(attRef.Tag, "REF", StringComparison.OrdinalIgnoreCase))
@@ -233,14 +515,14 @@ namespace ClassLibrary1
                             }
                         }
 
-                        ed.Command("_.ATTSYNC", "_N", "board");
-                        ed.Command("_.REGEN");
 
                         tr.Commit();
-                        ed.WriteMessage($"\n Full expression === > {FieldExpress}");
+                        // ed.WriteMessage($"\n Full expression === > {FieldExpress}");
 
                     }
                 }   // foreach (var switchboardId in ids)
+
+                
 
             }
             catch (System.Exception ex)
