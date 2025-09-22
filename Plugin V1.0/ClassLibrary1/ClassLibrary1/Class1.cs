@@ -129,7 +129,7 @@ namespace ClassLibrary1
                             }
                         }
 
-                        
+                        ed.Command("_.ATTSYNC", "_N", "Switches_x", "_Y");
 
                         // Place Switches_X blocks:
                         dx = 716.8;
