@@ -72,6 +72,8 @@ public  class Tools
                 }
             }
 
+            ed.Command("_.ATTSYNC", "_N", "board", "_Y");
+
             // Place Switches_X blocks:
             double dx = boardWidth / 2;
             double dy = 153.0;

@@ -1,16 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
-
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Vml;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace ClassLibrary1
 {
@@ -149,6 +148,12 @@ namespace ClassLibrary1
 
             ed.WriteMessage($"\n[id {idNo}] ConnectedTo='{ConnectedTo}', ConnectedToCable='{ConnectedToCable}'. Pairs: {matchingRows.Count}");
 
+            // insert that board first
+
+            
+            Tools.ProcessAswitchBoard(ConnectedToCable, xlsxPath, doc);
+
+
             // Print as: --> <Cable!B> ---> <Cable!E>
             foreach (var r in matchingRows)
             {
@@ -163,6 +168,7 @@ namespace ClassLibrary1
                 if (string.Equals(toValType, "Switchboard", StringComparison.OrdinalIgnoreCase))
                 {
                     ed.WriteMessage($"\n-------> {toVal} is a : Switchboard ==> Run previous code (stage 1 - 2)");
+
 
                     Tools.ProcessAswitchBoard(toVal, xlsxPath, doc);
 
