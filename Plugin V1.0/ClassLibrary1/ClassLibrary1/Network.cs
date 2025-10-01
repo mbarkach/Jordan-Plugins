@@ -149,9 +149,8 @@ namespace ClassLibrary1
             ed.WriteMessage($"\n[id {idNo}] ConnectedTo='{ConnectedTo}', ConnectedToCable='{ConnectedToCable}'. Pairs: {matchingRows.Count}");
 
             // insert that board first
-
             
-            Tools.ProcessAswitchBoard(ConnectedToCable, xlsxPath, doc);
+            Tools.ProcessAswitchBoard(ConnectedToCable, xlsxPath, doc, ConnectedTo);
 
 
             // Print as: --> <Cable!B> ---> <Cable!E>
@@ -170,7 +169,7 @@ namespace ClassLibrary1
                     ed.WriteMessage($"\n-------> {toVal} is a : Switchboard ==> Run previous code (stage 1 - 2)");
 
 
-                    Tools.ProcessAswitchBoard(toVal, xlsxPath, doc);
+                    Tools.ProcessAswitchBoard(toVal, xlsxPath, doc, fromVal);
 
                 }// 
 

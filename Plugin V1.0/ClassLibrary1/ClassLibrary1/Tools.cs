@@ -1,19 +1,19 @@
-﻿using ClosedXML.Excel;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
+using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
-using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
-
 public  class Tools
 {
-    public static void ProcessAswitchBoard(string switchboardId, string xlsxPath , Document doc)
+    public static void ProcessAswitchBoard(string switchboardId, string xlsxPath , Document doc, string Incomer =""  )
     {
         var db = doc.Database;
         var ed = doc.Editor;
@@ -81,7 +81,7 @@ public  class Tools
 
             Point3d pmidl = new Point3d(insPt.X + dx, insPt.Y + dy, insPt.Z);
 
-            // Insert the block ref SWITCHE_s at pmidl
+            // Insert the block ref SWITCHE_s in the Middle pmidl
             BlockReference SwitchBlockRef = new BlockReference(pmidl, bt[switchBlockName])
             {
                 ScaleFactors = new Scale3d(40.5)
@@ -101,6 +101,36 @@ public  class Tools
                     }
                 }
             }
+
+            // Fill attributes Id.-No
+
+            BlockTableRecord SwitchBlockDef = (BlockTableRecord)tr.GetObject(bt[switchBlockName], OpenMode.ForRead);
+
+            List<ObjectId> msvdFieldIds = new List<ObjectId>();
+
+            foreach (ObjectId entId in SwitchBlockDef)
+            {
+                var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                if (ent is AttributeDefinition attDef && !attDef.Constant)
+                {
+                    // Create an AttributeReference based on the ATTDEF
+                    var ar = new AttributeReference();
+                    ar.SetAttributeFromBlock(attDef, SwitchBlockRef.BlockTransform);
+
+                    // Inside your foreach over attributes of each Switches_x
+                    if (string.Equals(attDef.Tag, "Id.-No", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ar.TextString = Incomer;
+                        ar.AdjustAlignment(SwitchBlockRef.Database);
+
+                    }
+
+                    // Attach attribute to the inserted block reference
+                    SwitchBlockRef.AttributeCollection.AppendAttribute(ar);
+                    tr.AddNewlyCreatedDBObject(ar, true);
+
+                }
+            } // foreach (ObjectId entId in SwitchBlockDef)
 
             ed.Command("_.ATTSYNC", "_N", "Switches_x", "_Y");
 
@@ -151,9 +181,6 @@ public  class Tools
                 // Fill attributes from row.Values (keys are your exact attribute TAGs)
                 // We create AttrebutesDef from THE Block Definition (I said THE because it's 1 unique in dwg)
 
-                BlockTableRecord SwitchBlockDef = (BlockTableRecord)tr.GetObject(bt[switchBlockName], OpenMode.ForRead);
-
-                List<ObjectId> msvdFieldIds = new List<ObjectId>();
 
                 foreach (ObjectId entId in SwitchBlockDef)
                 {
